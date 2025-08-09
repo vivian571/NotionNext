@@ -107,11 +107,21 @@ async function createOrUpdatePage({ title, content, slug, date, ...properties })
       throw new Error(`无法访问数据库 ${DATABASE_ID}，请检查：\n1. 数据库ID是否正确\n2. 集成是否有权限访问该数据库\n3. 数据库是否已分享给集成\n错误详情: ${error.message}`);
     }
     
+    // 获取数据库结构
+    const database = await notion.databases.retrieve({ database_id: DATABASE_ID });
+    const slugProperty = Object.keys(database.properties).find(
+      key => key.toLowerCase() === 'slug'
+    );
+
+    if (!slugProperty) {
+      throw new Error(`数据库 ${DATABASE_ID} 中找不到 Slug 列。请确保数据库包含一个名为 'Slug' 的文本列。`);
+    }
+
     // 检查页面是否已存在
     const { results } = await notion.databases.query({
       database_id: DATABASE_ID,
       filter: {
-        property: 'Slug',
+        property: slugProperty,
         rich_text: {
           equals: slug
         }
@@ -182,8 +192,15 @@ async function createOrUpdatePage({ title, content, slug, date, ...properties })
       console.log(`  已创建: ${title}`);
     }
   } catch (error) {
-    console.error(`❌ 处理文章"${title}"时出错:`, error.message);
-    throw error;
+    const errorMessage = `❌ 处理文章"${title}"时出错: ${error.message}\n` +
+      `请检查：\n` +
+      `1. Notion 数据库 ${DATABASE_ID} 是否包含必要的列（Title, Slug, Date等）\n` +
+      `2. 集成是否有数据库的编辑权限\n` +
+      `3. 数据库是否已分享给集成\n` +
+      `4. 环境变量 NOTION_TOKEN 和 DATABASE_ID 是否正确`;
+    
+    console.error('\x1b[31m%s\x1b[0m', errorMessage);
+    throw new Error(errorMessage);
   }
 }
 
