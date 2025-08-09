@@ -38,18 +38,22 @@ function getFilesInfo(dir) {
 // 初始化文件状态
 let fileStates = getFilesInfo(POSTS_DIR);
 
+// 文件锁，防止并发操作
+let isProcessing = false;
+let pendingChanges = new Set();
+
 // 执行命令
-function runCommand(command) {
+async function runCommand(command) {
   console.log(`\n🚀 执行命令: ${command}`);
   
   return new Promise((resolve, reject) => {
     const child = exec(command, { cwd: process.cwd() }, (error, stdout, stderr) => {
+      if (stdout) console.log(stdout);
+      if (stderr) console.error(stderr);
       if (error) {
         console.error(`❌ 执行命令出错: ${error}`);
         return reject(error);
       }
-      if (stdout) console.log(stdout);
-      if (stderr) console.error(stderr);
       resolve(stdout);
     });
     
@@ -60,28 +64,56 @@ function runCommand(command) {
         child.kill();
         reject(new Error('Command timeout'));
       }
-    }, 30000); // 30秒超时
+    }, 30000);
   });
 }
 
 // 处理文件变化
 async function handleFileChange(filePath) {
-  console.log(`\n🔄 检测到文件变化: ${path.basename(filePath)}`);
+  // 添加到待处理队列
+  pendingChanges.add(filePath);
+  
+  // 如果已经有处理中的任务，直接返回
+  if (isProcessing) {
+    console.log(`\n📥 文件已加入队列: ${path.basename(filePath)}`);
+    return;
+  }
+  
+  isProcessing = true;
   
   try {
-    // 1. 推送到 GitHub
-    console.log('\n⬆️  正在推送到 GitHub...');
-    await runCommand('git add .');
-    await runCommand(`git commit -m "更新文章: ${path.basename(filePath)}"`);
-    await runCommand('git push origin main');
-    
-    // 2. 上传到 Notion
-    console.log('\n☁️  正在上传到 Notion...');
-    await runCommand(`node scripts/upload-to-notion.js "${filePath}"`);
-    
-    console.log(`\n✅ 处理完成: ${path.basename(filePath)}`);
-  } catch (error) {
-    console.error(`\n❌ 处理文件时出错:`, error);
+    // 处理所有待处理的文件
+    while (pendingChanges.size > 0) {
+      const currentFile = Array.from(pendingChanges)[0];
+      pendingChanges.delete(currentFile);
+      
+      console.log(`\n🔄 处理文件: ${path.basename(currentFile)}`);
+      
+      try {
+        // 1. 推送到 GitHub
+        console.log('⬆️  正在推送到 GitHub...');
+        await runCommand('git add .');
+        await runCommand(`git commit -m "更新文章: ${path.basename(currentFile)}"`);
+        await runCommand('git push origin main');
+        
+        // 2. 上传到 Notion
+        console.log('☁️  正在上传到 Notion...');
+        try {
+          await runCommand(`node scripts/upload-to-notion.js "${currentFile}"`);
+          console.log(`✅ 上传完成: ${path.basename(currentFile)}`);
+        } catch (uploadError) {
+          console.error(`❌ 上传到 Notion 失败:`, uploadError);
+          // 继续处理其他文件，不中断整个流程
+        }
+        
+        // 添加一点延迟，避免操作过于频繁
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error(`❌ 处理文件时出错: ${path.basename(currentFile)}`, error);
+      }
+    }
+  } finally {
+    isProcessing = false;
   }
 }
 
