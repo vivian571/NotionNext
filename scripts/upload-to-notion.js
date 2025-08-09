@@ -1,3 +1,5 @@
+require('dotenv').config({ path: `${__dirname}/../.env.local` });
+
 const { Client } = require('@notionhq/client');
 const fs = require('fs');
 const path = require('path');
@@ -7,6 +9,17 @@ const matter = require('gray-matter');
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const DATABASE_ID = process.env.DATABASE_ID;
 const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID;
+
+// 调试信息
+console.log('环境变量加载状态:');
+console.log('- NOTION_TOKEN:', NOTION_TOKEN ? '已设置' : '未设置');
+console.log('- DATABASE_ID:', DATABASE_ID || '未设置');
+console.log('- NOTION_PAGE_ID:', NOTION_PAGE_ID || '未设置');
+
+if (!NOTION_TOKEN || !DATABASE_ID) {
+  console.error('❌ 错误: 请确保在 .env.local 中设置 NOTION_TOKEN 和 DATABASE_ID');
+  process.exit(1);
+}
 const POSTS_DIR = path.join(process.cwd(), 'content/posts'); // 本地Markdown文件目录
 
 // 初始化Notion客户端
