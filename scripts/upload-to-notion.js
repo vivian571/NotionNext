@@ -12,6 +12,41 @@ const POSTS_DIR = path.join(process.cwd(), 'content/posts'); // 本地Markdown�
 // 初始化Notion客户端
 const notion = new Client({ auth: NOTION_TOKEN });
 
+/**
+ * 处理单个Markdown文件
+ * @param {string} filePath - Markdown文件路径
+ */
+async function processMarkdownFile(filePath) {
+  try {
+    const fileContent = fs.readFileSync(filePath, 'utf-8');
+    const { data: frontmatter, content } = matter(fileContent);
+    
+    // 确保有必要的元数据
+    const title = frontmatter.title || path.basename(filePath, '.md');
+    const slug = frontmatter.slug || path.basename(filePath, '.md').toLowerCase()
+      .replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    
+    // 创建或更新Notion页面
+    await createOrUpdatePage({
+      title,
+      content,
+      slug,
+      date: frontmatter.date || new Date().toISOString(),
+      ...frontmatter
+    });
+    
+    console.log(`✅ 已处理: ${path.basename(filePath)}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ 处理文件 ${filePath} 时出错:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * 上传所有Markdown文件到Notion
+ */
 async function uploadMarkdownToNotion() {
   try {
     // 确保目录存在
@@ -30,24 +65,8 @@ async function uploadMarkdownToNotion() {
     }
     
     for (const file of files) {
-      try {
-        const filePath = path.join(POSTS_DIR, file);
-        const fileContent = fs.readFileSync(filePath, 'utf-8');
-        const { data: frontmatter, content } = matter(fileContent);
-        
-        // 创建或更新Notion页面
-        await createOrUpdatePage({
-          title: frontmatter.title || path.basename(file, '.md'),
-          content,
-          slug: frontmatter.slug || path.basename(file, '.md'),
-          date: frontmatter.date,
-          ...frontmatter
-        });
-        
-        console.log(`✅ 已处理: ${file}`);
-      } catch (error) {
-        console.error(`❌ 处理文件 ${file} 时出错:`, error.message);
-      }
+      const filePath = path.join(POSTS_DIR, file);
+      await processMarkdownFile(filePath);
     }
   } catch (error) {
     console.error('❌ 处理文件时出错:', error);
@@ -157,20 +176,38 @@ async function createOrUpdatePage({ title, content, slug, date, ...properties })
 
 // 执行上传
 if (require.main === module) {
-  if (!NOTION_TOKEN || NOTION_TOKEN === '您的Notion集成令牌') {
-    console.error('❌ 错误: 请设置NOTION_TOKEN环境变量或修改脚本中的默认值');
+  if (!NOTION_TOKEN) {
+    console.error('❌ 错误: 请设置NOTION_TOKEN环境变量');
     process.exit(1);
   }
   
-  if (!DATABASE_ID || DATABASE_ID === '您的Notion数据库ID') {
-    console.error('❌ 错误: 请设置DATABASE_ID环境变量或修改脚本中的默认值');
+  if (!DATABASE_ID) {
+    console.error('❌ 错误: 请设置DATABASE_ID环境变量');
     process.exit(1);
   }
+  
+  // 检查是否传入了文件路径参数
+  const filePath = process.argv[2];
   
   console.log('🚀 开始上传Markdown到Notion...');
-  uploadMarkdownToNotion()
-    .then(() => console.log('✨ 上传完成!'))
-    .catch(err => console.error('❌ 上传过程中出错:', err));
+  
+  if (filePath) {
+    // 处理单个文件
+    console.log(`处理文件: ${filePath}`);
+    processMarkdownFile(filePath)
+      .then(success => {
+        console.log(success ? '✨ 上传完成!' : '❌ 上传过程中出错');
+      });
+  } else {
+    // 处理目录下所有文件
+    console.log('未指定文件路径，将处理 content/posts 目录下所有Markdown文件');
+    uploadMarkdownToNotion()
+      .then(() => console.log('✨ 上传完成!'))
+      .catch(err => console.error('❌ 上传过程中出错:', err));
+  }
 }
 
-module.exports = { uploadMarkdownToNotion };
+module.exports = { 
+  uploadMarkdownToNotion,
+  processMarkdownFile 
+};
