@@ -3,9 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const matter = require('gray-matter');
 
-// 配置信息
-const NOTION_TOKEN = process.env.NOTION_TOKEN || '您的Notion集成令牌';
-const DATABASE_ID = process.env.DATABASE_ID || '您的Notion数据库ID';
+// 配置信息 - 从环境变量获取
+const NOTION_TOKEN = process.env.NOTION_TOKEN;
+const DATABASE_ID = process.env.DATABASE_ID;
+const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID;
 const POSTS_DIR = path.join(process.cwd(), 'content/posts'); // 本地Markdown文件目录
 
 // 初始化Notion客户端
@@ -54,15 +55,26 @@ async function uploadMarkdownToNotion() {
 }
 
 async function createOrUpdatePage({ title, content, slug, date, ...properties }) {
+  if (!DATABASE_ID) {
+    throw new Error('DATABASE_ID 未设置');
+  }
+  
   if (!title) {
     throw new Error('文章标题不能为空');
   }
   
   if (!slug) {
-    slug = title.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-').replace(/^-+|-+$/g, '');
+    throw new Error('Slug 不能为空');
   }
 
   try {
+    // 验证数据库访问权限
+    try {
+      await notion.databases.retrieve({ database_id: DATABASE_ID });
+    } catch (error) {
+      throw new Error(`无法访问数据库 ${DATABASE_ID}，请检查：\n1. 数据库ID是否正确\n2. 集成是否有权限访问该数据库\n3. 数据库是否已分享给集成\n错误详情: ${error.message}`);
+    }
+    
     // 检查页面是否已存在
     const { results } = await notion.databases.query({
       database_id: DATABASE_ID,
