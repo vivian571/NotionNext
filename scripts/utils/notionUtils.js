@@ -4,6 +4,40 @@ const config = require('../config/config');
 
 const notion = new Client({ auth: config.notion.token });
 
+// 缓存数据库模式
+let databaseSchema = null;
+
+/**
+ * 获取数据库模式
+ * @param {string} databaseId - 数据库ID
+ * @returns {Promise<Object>} 数据库模式
+ */
+async function getDatabaseSchema(databaseId) {
+  if (databaseSchema) return databaseSchema;
+  
+  try {
+    console.log('正在获取数据库模式...');
+    const response = await notion.databases.retrieve({ database_id: databaseId });
+    databaseSchema = response.properties;
+    
+    console.log('数据库标题:', response.title[0]?.plain_text || '未知');
+    console.log('数据库ID:', databaseId);
+    console.log('数据库中的所有属性:');
+    Object.entries(databaseSchema).forEach(([key, value]) => {
+      console.log(`- ${key} (${value.type})`);
+    });
+    
+    return databaseSchema;
+  } catch (error) {
+    console.error('获取数据库模式失败:', error);
+    console.error('请确保：');
+    console.error('1. 数据库ID正确');
+    console.error('2. Notion集成已添加到数据库');
+    console.error('3. 数据库有正确的权限设置');
+    throw error;
+  }
+}
+
 /**
  * 重试包装器，用于处理API限流和重试
  * @param {Function} fn - 要执行的异步函数
@@ -52,7 +86,7 @@ async function findPageBySlug(databaseId, slug) {
       notion.databases.query({
         database_id: databaseId,
         filter: {
-          property: 'Slug',
+          property: 'slug',
           rich_text: { equals: slug }
         },
         page_size: 1
@@ -76,21 +110,44 @@ async function createOrUpdatePage({ title, content, slug, date, ...properties })
   if (!slug) throw new Error('Slug 不能为空');
 
   try {
+    // 获取数据库模式
+    const schema = await getDatabaseSchema(config.notion.databaseId);
+    
     // 检查页面是否已存在
     const existingPageId = await findPageBySlug(config.notion.databaseId, slug);
     
-    // 准备页面属性
+    // 准备页面属性 - 使用数据库中的实际属性名称
     const pageProperties = {
-      'Name': {
+      'title': {
         title: [{ text: { content: title } }]
       },
-      'Slug': {
+      'slug': {
         rich_text: [{ text: { content: slug } }]
       },
-      'Date': {
+      'date': {
         date: { start: new Date(date || new Date()).toISOString() }
       }
     };
+    
+    // 添加状态属性
+    const statusProp = Object.keys(schema).find(key => 
+      schema[key].type === 'select' && key.toLowerCase() === 'status'
+    );
+    if (statusProp) {
+      pageProperties[statusProp] = {
+        select: { name: 'Draft' }
+      };
+    }
+    
+    // 添加类型属性
+    const typeProp = Object.keys(schema).find(key => 
+      schema[key].type === 'select' && key.toLowerCase() === 'type'
+    );
+    if (typeProp) {
+      pageProperties[typeProp] = {
+        select: { name: 'Post' }
+      };
+    }
 
     // 添加其他自定义属性
     Object.entries(properties).forEach(([key, value]) => {
