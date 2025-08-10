@@ -1,17 +1,27 @@
 {
   "content\\posts\\《原子习惯》搞笑版实用说明书.md": {
-    "lastSynced": 1754817206770,
+    "lastSyncTime": 1754825524792,
     "slug": "原子习惯-搞笑版实用说明书",
     "title": "《原子习惯》搞笑版实用说明书"
   },
   "content\\posts\\利用免费的Cursor CLI和GPT-5模型进行高效编程开发.md": {
-    "lastSynced": 1754817209836,
+    "lastSyncTime": 1754825530718,
     "slug": "利用免费的cursor-cli和gpt-5模型进行高效编程开发",
     "title": "利用免费的Cursor CLI和GPT-5模型进行高效编程开发"
   },
+  "content\\posts\\方法论如何在学习上体现？还有其他吗？.md": {
+    "lastSyncTime": 1754825544086,
+    "slug": "方法论如何在学习上体现-还有其他吗",
+    "title": "方法论如何在学习上体现？还有其他吗？"
+  },
   "content\\posts\\终极学习对象深度剖析提示词.md": {
-    "lastSynced": 1754817212190,
+    "lastSyncTime": 1754825547828,
     "slug": "终极学习对象深度剖析提示词",
     "title": "终极学习对象深度剖析提示词"
+  },
+  "content\\posts\\项目全局分析与 Markdown 文件集成指南.md": {
+    "lastSyncTime": 1754825553757,
+    "slug": "项目全局分析与-markdown-文件集成指南",
+    "title": "项目全局分析与 Markdown 文件集成指南"
   }
 }

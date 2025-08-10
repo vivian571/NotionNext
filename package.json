@@ -57,6 +57,9 @@
     "react-notion-x": "^7.4.3",
     "react-share": "^5.2.2",
     "react-tweet-embed": "~2.0.0",
+    "remark": "^15.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
@@ -66,6 +69,7 @@
     "@typescript-eslint/parser": "^7.16.0",
     "@waline/client": "^2.5.1",
     "autoprefixer": "^10.4.13",
+    "chokidar": "^4.0.3",
     "cross-env": "^7.0.3",
     "eslint": "^8.57.1",
     "eslint-config-next": "^13.1.1",

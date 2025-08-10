@@ -1,6 +1,7 @@
 const { Client } = require('@notionhq/client');
 const { v4: uuidv4 } = require('uuid');
 const config = require('../config/config');
+const { markdownToNotionBlocks } = require('./markdownToNotion');
 
 const notion = new Client({ auth: config.notion.token });
 
@@ -52,7 +53,7 @@ async function findPageBySlug(databaseId, slug) {
       notion.databases.query({
         database_id: databaseId,
         filter: {
-          property: 'Slug',
+          property: 'slug',
           rich_text: { equals: slug }
         },
         page_size: 1
@@ -76,30 +77,160 @@ async function createOrUpdatePage({ title, content, slug, date, ...properties })
   if (!slug) throw new Error('Slug 不能为空');
 
   try {
+    // 获取数据库模式
+    const database = await withRetry(() => 
+      notion.databases.retrieve({ database_id: config.notion.databaseId })
+    );
+    
     // 检查页面是否已存在
     const existingPageId = await findPageBySlug(config.notion.databaseId, slug);
     
     // 准备页面属性
-    const pageProperties = {
-      'Name': {
+    const pageProperties = {};
+    
+    // 查找标题属性
+    const titleProp = Object.entries(database.properties).find(
+      ([_, prop]) => prop.type === 'title'
+    );
+    
+    if (titleProp) {
+      const [titlePropName] = titleProp;
+      pageProperties[titlePropName] = {
         title: [{ text: { content: title } }]
-      },
-      'Tags': frontmatter.tags ? {
-        multi_select: Array.isArray(frontmatter.tags) 
-          ? frontmatter.tags.map(tag => ({ name: tag }))
-          : [{ name: frontmatter.tags }]
-      } : undefined,
-      'Status': frontmatter.status ? {
-        select: { name: frontmatter.status }
-      } : { select: { name: '草稿' } },
-      'Date': {
-        date: { start: new Date(date || new Date()).toISOString() }
-      },
-      // 添加 Slug 作为隐藏属性，用于查询
-      'Slug': {
-        rich_text: [{ text: { content: slug } }]
+      };
+    }
+    
+    // 查找标签属性（多选）
+    const tagsProp = Object.entries(database.properties).find(
+      ([_, prop]) => prop.type === 'multi_select' && ['标签', 'tags', '分类', 'categories'].includes(prop.name.toLowerCase())
+    );
+    
+    if (tagsProp && properties.tags && properties.tags.length > 0) {
+      const [tagsPropName] = tagsProp;
+      pageProperties[tagsPropName] = {
+        multi_select: Array.isArray(properties.tags) 
+          ? properties.tags.map(tag => ({ name: String(tag) }))
+          : [{ name: String(properties.tags) }]
+      };
+    }
+    
+    // 查找状态属性（选择）
+    const statusProp = Object.entries(database.properties).find(
+      ([_, prop]) => prop.type === 'select' && ['状态', 'status', 'state'].includes(prop.name.toLowerCase())
+    );
+    
+    if (statusProp) {
+      const [statusPropName] = statusProp;
+      pageProperties[statusPropName] = properties.status ? {
+        select: { name: String(properties.status) }
+      } : { select: { name: 'published' } };
+    }
+    
+    // 输出所有可用属性以便调试
+    console.log('可用的数据库属性:', Object.entries(database.properties).map(([key, prop]) => `${key} (${prop.type})`).join(', '));
+    
+    // 查找类型属性（选择）
+    let typePropName = null;
+    let typePropObj = null;
+    
+    // 先尝试精确匹配
+    for (const [name, prop] of Object.entries(database.properties)) {
+      if (prop.type === 'select' && ['类型', 'type', 'category', '类别', '分类'].includes(prop.name.toLowerCase())) {
+        typePropName = name;
+        typePropObj = prop;
+        break;
       }
-    };
+    }
+    
+    if (typePropName && typePropObj) {
+      // 输出详细的类型属性信息
+      console.log('=== 类型属性调试信息 ===');
+      console.log('类型属性名称:', typePropName);
+      console.log('类型属性对象:', JSON.stringify(typePropObj, null, 2));
+      console.log('可用的类型选项:', typePropObj.select?.options?.map(o => o.name).join(', ') || '无选项');
+      
+      // 获取类型值，默认从 properties.type 或 'Post' 获取
+      let typeValue = properties.type || 'Post';
+      console.log('原始 type 值:', properties.type);
+      console.log('使用的 type 值:', typeValue);
+      
+      // 确保 typeValue 是字符串
+      typeValue = String(typeValue);
+      console.log('转换后的 type 值:', typeValue);
+      
+      // 检查选项是否存在
+      const options = typePropObj.select?.options || [];
+      console.log('所有选项:', options.map(o => o.name));
+      
+      const optionExists = options.some(opt => 
+        String(opt.name).toLowerCase() === typeValue.toLowerCase()
+      );
+      
+      console.log('选项存在性检查:', optionExists);
+      
+      if (optionExists) {
+        // 找到匹配的选项，使用原始的大小写格式
+        const matchedOption = options.find(opt => 
+          String(opt.name).toLowerCase() === typeValue.toLowerCase()
+        );
+        
+        console.log('匹配的选项:', matchedOption);
+        
+        // 使用匹配的选项
+        console.log(`✅ 使用类型: ${matchedOption.name}`);
+        pageProperties[typePropName] = {
+          select: {
+            id: matchedOption.id,
+            name: matchedOption.name
+          }
+        };
+        
+        // 输出最终的 pageProperties 用于调试
+        console.log('最终的 pageProperties:', JSON.stringify({
+          ...pageProperties,
+          // 隐藏可能过长的内容
+          content: pageProperties.content ? '[内容已隐藏]' : undefined
+        }, null, 2));
+      } else {
+        // 如果选项不存在，使用第一个可用选项
+        const defaultOption = typePropObj.select?.options?.[0]?.name;
+        if (defaultOption) {
+          pageProperties[typePropName] = {
+            select: { name: defaultOption }
+          };
+          console.warn(`类型值 '${typeValue}' 不在选项列表中，使用默认值: ${defaultOption}`);
+        } else {
+          console.warn(`类型值 '${typeValue}' 不在选项列表中，且无默认值可用`);
+          delete pageProperties[typePropName]; // 移除无效的类型属性
+        }
+      }
+    } else {
+      console.warn('未找到类型属性，跳过设置');
+    }
+    
+    // 查找日期属性
+    const dateProp = Object.entries(database.properties).find(
+      ([_, prop]) => prop.type === 'date' && ['日期', 'date', 'created', 'updated'].includes(prop.name.toLowerCase())
+    );
+    
+    if (dateProp) {
+      const [datePropName] = dateProp;
+      pageProperties[datePropName] = {
+        date: { start: new Date(date || new Date()).toISOString() }
+      };
+    }
+    
+    // 添加 slug 作为隐藏属性，用于查询
+    const slugProp = Object.entries(database.properties).find(
+      ([_, prop]) => prop.type === 'rich_text' && ['slug', '标识符', 'url'].includes(prop.name.toLowerCase())
+    );
+    
+    if (slugProp) {
+      const [slugPropName] = slugProp;
+      pageProperties[slugPropName] = {
+        rich_text: [{ text: { content: String(slug) } }]
+      };
+    }
 
     // 添加其他自定义属性
     Object.entries(properties).forEach(([key, value]) => {
@@ -129,52 +260,76 @@ async function createOrUpdatePage({ title, content, slug, date, ...properties })
       }
     });
 
-    // 分割内容为多个块
-    const contentChunks = splitTextIntoChunks(content);
-    const children = contentChunks.map(chunk => ({
-      object: 'block',
-      type: 'paragraph',
-      paragraph: {
-        rich_text: [{
-          type: 'text',
-          text: { content: chunk }
-        }]
-      }
-    }));
-
     let pageId;
     
     if (existingPageId) {
-      // 更新现有页面
+      // 更新现有页面属性
       await withRetry(() => 
-        notion.blocks.children.append({
-          block_id: existingPageId,
-          children: children
-        })
-      );
-      
-      await withRetry(() =>
         notion.pages.update({
           page_id: existingPageId,
           properties: pageProperties
         })
       );
       
-      pageId = existingPageId;
-      console.log(`✅ 已更新页面: ${title} (${slug})`);
-    } else {
-      // 创建新页面
-      const response = await withRetry(() =>
-        notion.pages.create({
-          parent: { database_id: config.notion.databaseId },
-          properties: pageProperties,
-          children: children
+      // 清空现有内容
+      const existingBlocks = await withRetry(() =>
+        notion.blocks.children.list({
+          block_id: existingPageId,
+          page_size: 100 // 增加页面大小以确保获取所有块
         })
       );
+
+      // 删除现有块
+      for (const block of existingBlocks.results) {
+        try {
+          await withRetry(() => notion.blocks.delete({ block_id: block.id }));
+        } catch (error) {
+          console.warn(`删除块 ${block.id} 失败:`, error.message);
+        }
+      }
+
+      // 添加新内容（直接使用传入的 content 数组）
+      if (content && content.length > 0) {
+        console.log('添加新内容，块数量:', content.length);
+        
+        // 分批添加内容，避免请求过大
+        const chunkSize = 50; // Notion API 每批最多100个块
+        for (let i = 0; i < content.length; i += chunkSize) {
+          const chunk = content.slice(i, i + chunkSize);
+          console.log(`添加块 ${i + 1}-${Math.min(i + chunkSize, content.length)}/${content.length}`);
+          
+          await withRetry(() =>
+            notion.blocks.children.append({
+              block_id: existingPageId,
+              children: chunk
+            })
+          );
+        }
+      }
+
+      pageId = existingPageId;
+    } else {
+      // 创建新页面
+      console.log('创建新页面，块数量:', content?.length || 0);
+      const pageData = {
+        parent: { database_id: config.notion.databaseId },
+        properties: pageProperties,
+        children: content || []
+      };
+
+      console.log('准备创建/更新页面...');
+      console.log('完整的请求体:', JSON.stringify({
+        parent: { database_id: config.notion.databaseId },
+        properties: pageProperties,
+        children: '[内容已隐藏]' // 不记录子块内容，避免日志过长
+      }, null, 2));
       
-      pageId = response.id;
-      console.log(`✅ 已创建新页面: ${title} (${slug})`);
-    }
+      const newPage = await withRetry(() =>
+        notion.pages.create(pageData)
+      );
+      pageId = newPage.id;
+    } 
+    console.log(`✅ 已${existingPageId ? '更新' : '创建'}页面: ${title} (${slug})`);
     
     return pageId;
   } catch (error) {

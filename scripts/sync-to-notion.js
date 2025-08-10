@@ -6,7 +6,16 @@ const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const matter = require('gray-matter');
+const { marked } = require('marked');
 const { ensureDirectoryExists, getMarkdownFiles, getFileMtime } = require('./utils/fileUtils');
+
+// 配置 marked
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  headerIds: true,
+  mangle: false
+});
 const { createOrUpdatePage } = require('./utils/notionUtils');
 const config = require('./config/config');
 
@@ -46,15 +55,16 @@ async function saveSyncState(state) {
  * 处理单个Markdown文件
  * @param {string} filePath - 文件路径
  * @param {Object} state - 同步状态
+ * @param {boolean} forceUpdate - 是否强制更新
  * @returns {Promise<boolean>} 是否成功
  */
-async function processMarkdownFile(filePath, state) {
+async function processMarkdownFile(filePath, state, forceUpdate = false) {
   const relativePath = path.relative(process.cwd(), filePath);
-  const fileMtime = getFileMtime(filePath);
-  const fileState = state[relativePath];
+  const lastSyncTime = state[relativePath]?.lastSyncTime || 0;
+  const fileMtime = (await getFileMtime(filePath)).getTime();
   
-  // 检查文件是否需要更新
-  if (fileState && fileState.lastSynced >= fileMtime.getTime()) {
+  // 如果文件未修改且不是强制更新，则跳过
+  if (fileMtime <= lastSyncTime && !forceUpdate) {
     console.log(`⏩ 跳过未修改文件: ${relativePath}`);
     return true;
   }
@@ -73,12 +83,12 @@ async function processMarkdownFile(filePath, state) {
     // 确保 frontmatter 中包含必要的字段
     const pageData = {
       title,
-      content,
+      content: content,  // 直接传递 Markdown 内容
       slug,
       date: frontmatter.date || new Date().toISOString(),
       ...frontmatter,
-      // 确保状态默认为草稿
-      status: frontmatter.status || '草稿',
+      // 确保状态默认为 published
+      status: frontmatter.status || 'published',
       // 确保标签是数组格式
       tags: frontmatter.tags ? 
         (Array.isArray(frontmatter.tags) ? frontmatter.tags : [frontmatter.tags])
@@ -89,7 +99,7 @@ async function processMarkdownFile(filePath, state) {
     
     // 更新状态
     state[relativePath] = {
-      lastSynced: Date.now(),
+      lastSyncTime: Date.now(),
       slug,
       title
     };
@@ -103,9 +113,32 @@ async function processMarkdownFile(filePath, state) {
 }
 
 /**
+ * 解析命令行参数
+ * @returns {Object} 参数对象
+ */
+function parseArgs() {
+  const args = process.argv.slice(2);
+  return {
+    force: args.includes('--force')
+  };
+}
+
+/**
  * 主函数
  */
 async function main() {
+  const { force } = parseArgs();
+  
+  if (force) {
+    console.log('🔧 强制同步模式已启用，将忽略缓存');
+    // 删除同步状态文件
+    try {
+      await fs.unlink(path.join(__dirname, '.notion-sync-state.json'));
+    } catch (err) {
+      // 文件不存在也没关系
+    }
+  }
+  
   console.log('🚀 开始同步到 Notion...');
   
   try {
@@ -128,7 +161,7 @@ async function main() {
     // 处理每个文件
     let successCount = 0;
     for (const file of files) {
-      const success = await processMarkdownFile(file, state);
+      const success = await processMarkdownFile(file, state, force);
       if (success) successCount++;
       
       // 保存状态，以便在出错时不会丢失进度
