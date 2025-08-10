@@ -4,40 +4,6 @@ const config = require('../config/config');
 
 const notion = new Client({ auth: config.notion.token });
 
-// 缓存数据库模式
-let databaseSchema = null;
-
-/**
- * 获取数据库模式
- * @param {string} databaseId - 数据库ID
- * @returns {Promise<Object>} 数据库模式
- */
-async function getDatabaseSchema(databaseId) {
-  if (databaseSchema) return databaseSchema;
-  
-  try {
-    console.log('正在获取数据库模式...');
-    const response = await notion.databases.retrieve({ database_id: databaseId });
-    databaseSchema = response.properties;
-    
-    console.log('数据库标题:', response.title[0]?.plain_text || '未知');
-    console.log('数据库ID:', databaseId);
-    console.log('数据库中的所有属性:');
-    Object.entries(databaseSchema).forEach(([key, value]) => {
-      console.log(`- ${key} (${value.type})`);
-    });
-    
-    return databaseSchema;
-  } catch (error) {
-    console.error('获取数据库模式失败:', error);
-    console.error('请确保：');
-    console.error('1. 数据库ID正确');
-    console.error('2. Notion集成已添加到数据库');
-    console.error('3. 数据库有正确的权限设置');
-    throw error;
-  }
-}
-
 /**
  * 重试包装器，用于处理API限流和重试
  * @param {Function} fn - 要执行的异步函数
@@ -86,7 +52,7 @@ async function findPageBySlug(databaseId, slug) {
       notion.databases.query({
         database_id: databaseId,
         filter: {
-          property: 'slug',
+          property: 'Slug',
           rich_text: { equals: slug }
         },
         page_size: 1
@@ -110,48 +76,53 @@ async function createOrUpdatePage({ title, content, slug, date, ...properties })
   if (!slug) throw new Error('Slug 不能为空');
 
   try {
-    // 获取数据库模式
-    const schema = await getDatabaseSchema(config.notion.databaseId);
-    
     // 检查页面是否已存在
     const existingPageId = await findPageBySlug(config.notion.databaseId, slug);
     
-    // 准备页面属性 - 使用数据库中的实际属性名称
+    // 准备页面属性
     const pageProperties = {
-      'title': {
+      'Name': {
         title: [{ text: { content: title } }]
       },
-      'slug': {
-        rich_text: [{ text: { content: slug } }]
-      },
-      'date': {
+      'Tags': frontmatter.tags ? {
+        multi_select: Array.isArray(frontmatter.tags) 
+          ? frontmatter.tags.map(tag => ({ name: tag }))
+          : [{ name: frontmatter.tags }]
+      } : undefined,
+      'Status': frontmatter.status ? {
+        select: { name: frontmatter.status }
+      } : { select: { name: '草稿' } },
+      'Date': {
         date: { start: new Date(date || new Date()).toISOString() }
+      },
+      // 添加 Slug 作为隐藏属性，用于查询
+      'Slug': {
+        rich_text: [{ text: { content: slug } }]
       }
     };
-    
-    // 添加状态属性
-    const statusProp = Object.keys(schema).find(key => 
-      schema[key].type === 'select' && key.toLowerCase() === 'status'
-    );
-    if (statusProp) {
-      pageProperties[statusProp] = {
-        select: { name: 'Draft' }
-      };
-    }
-    
-    // 添加类型属性
-    const typeProp = Object.keys(schema).find(key => 
-      schema[key].type === 'select' && key.toLowerCase() === 'type'
-    );
-    if (typeProp) {
-      pageProperties[typeProp] = {
-        select: { name: 'Post' }
-      };
-    }
 
     // 添加其他自定义属性
     Object.entries(properties).forEach(([key, value]) => {
-      if (value !== undefined) {
+      if (value === undefined) return;
+      
+      // 跳过已经处理的属性
+      if (['title', 'slug', 'date', 'tags', 'status'].includes(key.toLowerCase())) {
+        return;
+      }
+      
+      // 根据值的类型设置属性
+      if (Array.isArray(value)) {
+        // 处理数组类型的值
+        pageProperties[key] = {
+          multi_select: value.map(item => ({
+            name: String(item)
+          }))
+        };
+      } else if (typeof value === 'object' && value !== null) {
+        // 处理对象类型的值
+        pageProperties[key] = value;
+      } else {
+        // 默认处理为文本
         pageProperties[key] = {
           rich_text: [{ text: { content: String(value) } }]
         };

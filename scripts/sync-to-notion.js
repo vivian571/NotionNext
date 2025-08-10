@@ -63,19 +63,29 @@ async function processMarkdownFile(filePath, state) {
     const fileContent = fsSync.readFileSync(filePath, 'utf-8');
     const { data: frontmatter, content } = matter(fileContent);
     
+    // 设置默认值
     const title = frontmatter.title || path.basename(filePath, '.md');
     const slug = frontmatter.slug || path.basename(filePath, '.md')
       .toLowerCase()
       .replace(/[^\w\u4e00-\u9fa5-]+/g, '-')
       .replace(/^-+|-+$/g, '');
     
-    await createOrUpdatePage({
+    // 确保 frontmatter 中包含必要的字段
+    const pageData = {
       title,
       content,
       slug,
       date: frontmatter.date || new Date().toISOString(),
-      ...frontmatter
-    });
+      ...frontmatter,
+      // 确保状态默认为草稿
+      status: frontmatter.status || '草稿',
+      // 确保标签是数组格式
+      tags: frontmatter.tags ? 
+        (Array.isArray(frontmatter.tags) ? frontmatter.tags : [frontmatter.tags])
+        : []
+    };
+    
+    await createOrUpdatePage(pageData);
     
     // 更新状态
     state[relativePath] = {

@@ -1,3 +1,10 @@
+---
+title: 利用免费的Cursor CLI和GPT-5模型进行高效编程开发
+date: '2025-08-10'
+status: 草稿
+tags: []
+slug: 利用免费的cursor-cli和gpt-5模型进行高效编程开发
+---
 好的，我们来运用您提供的这个深度分析框架，对视频 `https://youtu.be/KE1gD-02BUk?si=T_fOHPb3Ttd93GKR` 的内容进行一次完整、结构化的总结。
 
 这个分析将视频本身视为一个学习对象，旨在彻底剖析其传达的信息和价值。
